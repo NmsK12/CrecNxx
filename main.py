@@ -23,15 +23,49 @@ def procesar_linea(linea: str):
     return dict(zip(CAMPOS, partes))
 
 def buscar_dni_en_bunny(dni: str):
-    """Busca el DNI en el archivo remoto usando streaming"""
+    """Busca un DNI en Bunny Storage sin leer todo el archivo"""
     with requests.get(RENIEC_URL, stream=True) as r:
         r.raise_for_status()
-        for linea in r.iter_lines():
-            if linea:
-                decoded = linea.decode("utf-8")
-                if decoded.startswith(dni + "|"):
-                    return procesar_linea(decoded)
+        buffer = ""
+        for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB por bloque
+            buffer += chunk.decode("utf-8", errors="ignore")
+            lineas = buffer.split("\n")
+            buffer = lineas.pop()  # La última línea puede estar incompleta
+
+            for linea in lineas:
+                if linea.startswith(dni + "|"):
+                    return procesar_linea(linea)
     return None
+
+def buscar_por_nombres_en_bunny(nombres: str, limit: int = 10):
+    """Busca personas por nombres completos en Bunny Storage"""
+    resultados = []
+    terminos = [t.strip().lower() for t in nombres.split() if t.strip()]
+
+    if not terminos:
+        return resultados
+
+    with requests.get(RENIEC_URL, stream=True) as r:
+        r.raise_for_status()
+        buffer = ""
+        for chunk in r.iter_content(chunk_size=1024 * 1024):  # 1MB por bloque
+            buffer += chunk.decode("utf-8", errors="ignore")
+            lineas = buffer.split("\n")
+            buffer = lineas.pop()  # La última línea puede estar incompleta
+
+            for linea in lineas:
+                if not linea.strip():
+                    continue
+
+                # Verificar si la línea contiene todos los términos de búsqueda
+                linea_lower = linea.lower()
+                if all(termino in linea_lower for termino in terminos):
+                    persona = procesar_linea(linea)
+                    resultados.append(persona)
+
+                    if len(resultados) >= limit:
+                        return resultados
+    return resultados
 
 @app.get("/dni/{dni}")
 def buscar_dni(dni: str):
@@ -45,6 +79,29 @@ def buscar_dni(dni: str):
     else:
         raise HTTPException(status_code=404, detail="DNI no encontrado")
 
+@app.get("/buscar")
+def buscar_por_nombres(nombres: str, limit: int = 10):
+    """Endpoint para buscar por nombres completos"""
+    if not nombres or len(nombres.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Debe proporcionar al menos 2 caracteres para buscar.")
+
+    if limit > 50:
+        limit = 50  # Máximo 50 resultados
+
+    resultados = buscar_por_nombres_en_bunny(nombres, limit)
+    return {
+        "status": "ok",
+        "query": nombres,
+        "total": len(resultados),
+        "data": resultados
+    }
+
 @app.get("/")
 def home():
-    return {"mensaje": "API RENIEC funcionando ✅", "endpoints": ["/dni/{dni}"]}
+    return {
+        "mensaje": "API RENIEC funcionando ✅",
+        "endpoints": [
+            "/dni/{dni} - Buscar por DNI",
+            "/buscar?nombres={nombres} - Buscar por nombres completos"
+        ]
+    }
