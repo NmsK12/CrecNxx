@@ -15,13 +15,16 @@ GOOGLE_DRIVE_URL = "https://drive.usercontent.google.com/download?id=12OYjI-Z6yO
 app = FastAPI(title="API RENIEC con DuckDB")
 STARTUP_ERROR: Optional[str] = None
 
+import subprocess
+import sys
+
 def download_reniec_data():
-    """Descarga los datos de RENIEC desde Google Drive"""
+    """Descarga los datos de RENIEC desde Google Drive usando aria2c para descargas paralelas y reanudables"""
     if os.path.exists(TXT_PATH):
         file_size = os.path.getsize(TXT_PATH)
         print(f"Archivo reniec.txt ya existe, tamaño: {file_size / (1024**3):.2f} GB")
-        # Si el archivo existe y es mayor a 1GB, asumimos que está completo
-        if file_size > 1024**3:
+        # Si el archivo existe y es mayor a 5GB, asumimos que está completo
+        if file_size > 5 * 1024**3:
             print("Archivo parece estar completo, usando archivo local")
             return True
         else:
@@ -29,32 +32,30 @@ def download_reniec_data():
             os.remove(TXT_PATH)
 
     try:
-        print("Descargando datos de RENIEC desde Google Drive...")
-        print(f"URL: {GOOGLE_DRIVE_URL}")
+        # Verificar si aria2c está instalado, si no, instalarlo
+        try:
+            subprocess.run(["aria2c", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            print("aria2c ya está instalado")
+        except Exception:
+            print("aria2c no está instalado, instalando...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "aria2p"])
+            print("aria2c instalado")
 
-        # Intentar primero con requests para mejor control
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # Construir comando aria2c para descargar con múltiples conexiones
+        aria2c_cmd = [
+            "aria2c",
+            "-x", "16",  # 16 conexiones paralelas
+            "-s", "16",  # 16 fuentes
+            "-k", "1M",  # tamaño de fragmento 1MB
+            "-o", TXT_PATH,
+            GOOGLE_DRIVE_URL
+        ]
 
-        print("Intentando descarga con requests...")
-        response = requests.get(GOOGLE_DRIVE_URL, headers=headers, stream=True)
-        response.raise_for_status()
-
-        # Verificar el tamaño del contenido si está disponible
-        total_size = int(response.headers.get('content-length', 0))
-        if total_size > 0:
-            print(f"Tamaño esperado: {total_size / (1024**3):.2f} GB")
-
-        downloaded_size = 0
-        with open(TXT_PATH, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    downloaded_size += len(chunk)
-
-        actual_size = os.path.getsize(TXT_PATH)
-        print(f"Tamaño descargado: {actual_size / (1024**3):.2f} GB")
+        print("Descargando datos con aria2c...")
+        result = subprocess.run(aria2c_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode != 0:
+            print(f"Error en aria2c: {result.stderr}")
+            return False
 
         # Verificar que no sea un archivo HTML de error
         if os.path.exists(TXT_PATH):
@@ -66,19 +67,21 @@ def download_reniec_data():
                     os.remove(TXT_PATH)
                     return False
 
-        # Verificar que el archivo tenga un tamaño razonable (> 1GB)
-        if actual_size < 1024**3:  # Menos de 1GB
+        actual_size = os.path.getsize(TXT_PATH)
+        print(f"Tamaño descargado: {actual_size / (1024**3):.2f} GB")
+
+        # Validar que el archivo pese al menos 5GB
+        if actual_size < 5 * 1024**3:
             print(f"ERROR: Archivo descargado es muy pequeño ({actual_size / (1024**3):.2f} GB). Se esperaba al menos 5GB.")
-            print("El enlace podría estar apuntando a un archivo incorrecto.")
             if os.path.exists(TXT_PATH):
                 os.remove(TXT_PATH)
             return False
 
-        print("Datos descargados exitosamente")
+        print("Datos descargados exitosamente con aria2c")
         return True
 
     except Exception as e:
-        print(f"Error al descargar los datos: {e}")
+        print(f"Error al descargar los datos con aria2c: {e}")
         if os.path.exists(TXT_PATH):
             os.remove(TXT_PATH)
         print("Continuando sin datos...")
