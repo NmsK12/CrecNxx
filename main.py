@@ -22,24 +22,27 @@ def load_reniec_from_stream():
 
     try:
         # Conectar al stream
-        response = requests.get(GOOGLE_DRIVE_URL, stream=True, timeout=30)
+        response = requests.get(GOOGLE_DRIVE_URL, stream=True, timeout=60)
         response.raise_for_status()
 
         # Verificar que no sea HTML de error
-        first_chunk = next(response.iter_content(chunk_size=1024))
-        first_line = first_chunk.decode('utf-8', errors='ignore').split('\n')[0]
-
-        if first_line.startswith('<!DOCTYPE') or first_line.startswith('<html'):
+        peek = response.raw.read(1024)
+        first_line = peek.decode("utf-8", errors="ignore").split("\n")[0]
+        if first_line.startswith("<!DOCTYPE") or first_line.startswith("<html"):
             print("ERROR: La URL devuelve HTML en lugar de datos TXT")
             print(f"Contenido: {first_line[:200]}...")
             return False
 
+        # Volvemos el puntero al inicio
+        response.close()
+        response = requests.get(GOOGLE_DRIVE_URL, stream=True, timeout=60)
+
         print("Conexión exitosa a Bunny Storage")
 
-        # Crear tabla en DuckDB
+        # Conectar DuckDB
         con = duckdb.connect(DB_PATH)
 
-        # Crear tabla con esquema definido
+        # Definir columnas
         columns = {
             "DNI": "VARCHAR",
             "AP_PAT": "VARCHAR",
@@ -59,7 +62,7 @@ def load_reniec_from_stream():
             "PADRE": "VARCHAR",
         }
 
-        # Crear tabla personas
+        # Crear tabla
         con.execute("DROP TABLE IF EXISTS personas")
         create_table_sql = f"""
         CREATE TABLE personas (
@@ -70,54 +73,42 @@ def load_reniec_from_stream():
 
         print("Procesando datos en streaming...")
 
-        # Procesar el stream línea por línea
-        buffer = first_chunk.decode('utf-8', errors='ignore')
-        lines_processed = 0
-        batch_size = 10000  # Insertar en lotes para mejor rendimiento
+        # Procesar línea por línea
+        batch_size = 10000
         batch_data = []
+        lines_processed = 0
+        buffer = ""
 
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                buffer += chunk.decode('utf-8', errors='ignore')
-                lines = buffer.split('\n')
+        for chunk in response.iter_content(chunk_size=1024*1024):  # 1 MB por chunk
+            buffer += chunk.decode("utf-8", errors="ignore")
+            lines = buffer.split("\n")
+            buffer = lines.pop()  # Mantener última línea incompleta
 
-                # Mantener la última línea incompleta en el buffer
-                buffer = lines[-1]
-                lines = lines[:-1]
+            for line in lines:
+                if not line.strip():
+                    continue
 
-                for line in lines:
-                    if line.strip():  # Ignorar líneas vacías
-                        # Parsear línea CSV
-                        fields = line.split('|')
-                        if len(fields) >= len(columns):  # Asegurar que tenga suficientes campos
-                            # Crear diccionario con los datos
-                            row_data = {}
-                            for i, col in enumerate(columns.keys()):
-                                if i < len(fields):
-                                    row_data[col] = fields[i].strip()
-                                else:
-                                    row_data[col] = None
+                fields = line.split(DELIM)
+                if len(fields) < len(columns):
+                    continue
 
-                            batch_data.append(row_data)
-                            lines_processed += 1
+                row_data = tuple(fields[:len(columns)])
+                batch_data.append(row_data)
+                lines_processed += 1
 
-                            # Insertar en lotes
-                            if len(batch_data) >= batch_size:
-                                # Insertar lote
-                                values = [tuple(row.values()) for row in batch_data]
-                                placeholders = ', '.join(['?' for _ in columns])
-                                insert_sql = f"INSERT INTO personas VALUES ({placeholders})"
-                                con.executemany(insert_sql, values)
+                # Insertar lote
+                if len(batch_data) >= batch_size:
+                    placeholders = ", ".join(["?"] * len(columns))
+                    insert_sql = f"INSERT INTO personas VALUES ({placeholders})"
+                    con.executemany(insert_sql, batch_data)
+                    print(f"Procesadas {lines_processed} líneas...")
+                    batch_data.clear()
 
-                                print(f"Procesadas {lines_processed} líneas...")
-                                batch_data = []
-
-        # Insertar último lote
+        # Insertar el último lote
         if batch_data:
-            values = [tuple(row.values()) for row in batch_data]
-            placeholders = ', '.join(['?' for _ in columns])
+            placeholders = ", ".join(["?"] * len(columns))
             insert_sql = f"INSERT INTO personas VALUES ({placeholders})"
-            con.executemany(insert_sql, values)
+            con.executemany(insert_sql, batch_data)
 
         print(f"Procesamiento completado. Total líneas: {lines_processed}")
 
@@ -137,7 +128,7 @@ def load_reniec_from_stream():
         FROM personas;
         """)
 
-        # Verificar que se cargaron datos
+        # Contar filas cargadas
         total_rows = con.execute("SELECT COUNT(*) FROM personas").fetchone()[0]
         print(f"Base de datos creada exitosamente con {total_rows} registros")
 
