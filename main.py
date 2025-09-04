@@ -10,81 +10,142 @@ DELIM    = "|"
 ENCODING_DEFAULT = "utf-8"     
 
 # URL de Google Drive (archivo completo de 5.8GB)
-GOOGLE_DRIVE_URL = "https://drive.usercontent.google.com/download?id=12OYjI-Z6yOMCMCU4kCIObliXHHi7s98T&export=download&authuser=0&confirm=t&uuid=bcd21b93-b050-4af7-b349-e195c2b75cc2&at=AN8xHopYN2rm6zpH2Dj6ozcmqz06%3A1756957395612"
+GOOGLE_DRIVE_URL = "https://reniec-data.b-cdn.net/reniec.txt"
 
 app = FastAPI(title="API RENIEC con DuckDB")
 STARTUP_ERROR: Optional[str] = None
 
-import subprocess
-import sys
-
-def download_reniec_data():
-    """Descarga los datos de RENIEC desde Google Drive usando aria2c para descargas paralelas y reanudables"""
-    if os.path.exists(TXT_PATH):
-        file_size = os.path.getsize(TXT_PATH)
-        print(f"Archivo reniec.txt ya existe, tamaño: {file_size / (1024**3):.2f} GB")
-        # Si el archivo existe y es mayor a 5GB, asumimos que está completo
-        if file_size > 5 * 1024**3:
-            print("Archivo parece estar completo, usando archivo local")
-            return True
-        else:
-            print("Archivo es muy pequeño, volviendo a descargar...")
-            os.remove(TXT_PATH)
+def load_reniec_from_stream():
+    """Carga los datos de RENIEC directamente desde Bunny Storage en streaming"""
+    print("Conectando a Bunny Storage...")
+    print(f"URL: {GOOGLE_DRIVE_URL}")
 
     try:
-        # Verificar si aria2c está instalado, si no, instalarlo
-        try:
-            subprocess.run(["aria2c", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            print("aria2c ya está instalado")
-        except Exception:
-            print("aria2c no está instalado, instalando...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "aria2p"])
-            print("aria2c instalado")
+        # Conectar al stream
+        response = requests.get(GOOGLE_DRIVE_URL, stream=True, timeout=30)
+        response.raise_for_status()
 
-        # Construir comando aria2c para descargar con múltiples conexiones
-        aria2c_cmd = [
-            "aria2c",
-            "-x", "16",  # 16 conexiones paralelas
-            "-s", "16",  # 16 fuentes
-            "-k", "1M",  # tamaño de fragmento 1MB
-            "-o", TXT_PATH,
-            GOOGLE_DRIVE_URL
-        ]
+        # Verificar que no sea HTML de error
+        first_chunk = next(response.iter_content(chunk_size=1024))
+        first_line = first_chunk.decode('utf-8', errors='ignore').split('\n')[0]
 
-        print("Descargando datos con aria2c...")
-        result = subprocess.run(aria2c_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode != 0:
-            print(f"Error en aria2c: {result.stderr}")
+        if first_line.startswith('<!DOCTYPE') or first_line.startswith('<html'):
+            print("ERROR: La URL devuelve HTML en lugar de datos TXT")
+            print(f"Contenido: {first_line[:200]}...")
             return False
 
-        # Verificar que no sea un archivo HTML de error
-        if os.path.exists(TXT_PATH):
-            with open(TXT_PATH, 'r', encoding='utf-8', errors='ignore') as f:
-                first_line = f.readline().strip()
-                if first_line.startswith('<!DOCTYPE') or first_line.startswith('<html'):
-                    print("ERROR: El archivo descargado es HTML, no TXT. El enlace requiere autenticación.")
-                    print(f"Contenido del archivo: {first_line[:200]}...")
-                    os.remove(TXT_PATH)
-                    return False
+        print("Conexión exitosa a Bunny Storage")
 
-        actual_size = os.path.getsize(TXT_PATH)
-        print(f"Tamaño descargado: {actual_size / (1024**3):.2f} GB")
+        # Crear tabla en DuckDB
+        con = duckdb.connect(DB_PATH)
 
-        # Validar que el archivo pese al menos 5GB
-        if actual_size < 5 * 1024**3:
-            print(f"ERROR: Archivo descargado es muy pequeño ({actual_size / (1024**3):.2f} GB). Se esperaba al menos 5GB.")
-            if os.path.exists(TXT_PATH):
-                os.remove(TXT_PATH)
-            return False
+        # Crear tabla con esquema definido
+        columns = {
+            "DNI": "VARCHAR",
+            "AP_PAT": "VARCHAR",
+            "AP_MAT": "VARCHAR",
+            "NOMBRES": "VARCHAR",
+            "FECHA_NAC": "VARCHAR",
+            "FCH_INSCRIPCION": "VARCHAR",
+            "FCH_EMISION": "VARCHAR",
+            "FCH_CADUCIDAD": "VARCHAR",
+            "UBIGEO_NAC": "VARCHAR",
+            "UBIGEO_DIR": "VARCHAR",
+            "DIRECCION": "VARCHAR",
+            "SEXO": "VARCHAR",
+            "EST_CIVIL": "VARCHAR",
+            "DIG_RUC": "VARCHAR",
+            "MADRE": "VARCHAR",
+            "PADRE": "VARCHAR",
+        }
 
-        print("Datos descargados exitosamente con aria2c")
+        # Crear tabla personas
+        con.execute("DROP TABLE IF EXISTS personas")
+        create_table_sql = f"""
+        CREATE TABLE personas (
+            {', '.join([f'{col} {dtype}' for col, dtype in columns.items()])}
+        )
+        """
+        con.execute(create_table_sql)
+
+        print("Procesando datos en streaming...")
+
+        # Procesar el stream línea por línea
+        buffer = first_chunk.decode('utf-8', errors='ignore')
+        lines_processed = 0
+        batch_size = 10000  # Insertar en lotes para mejor rendimiento
+        batch_data = []
+
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                buffer += chunk.decode('utf-8', errors='ignore')
+                lines = buffer.split('\n')
+
+                # Mantener la última línea incompleta en el buffer
+                buffer = lines[-1]
+                lines = lines[:-1]
+
+                for line in lines:
+                    if line.strip():  # Ignorar líneas vacías
+                        # Parsear línea CSV
+                        fields = line.split('|')
+                        if len(fields) >= len(columns):  # Asegurar que tenga suficientes campos
+                            # Crear diccionario con los datos
+                            row_data = {}
+                            for i, col in enumerate(columns.keys()):
+                                if i < len(fields):
+                                    row_data[col] = fields[i].strip()
+                                else:
+                                    row_data[col] = None
+
+                            batch_data.append(row_data)
+                            lines_processed += 1
+
+                            # Insertar en lotes
+                            if len(batch_data) >= batch_size:
+                                # Insertar lote
+                                values = [tuple(row.values()) for row in batch_data]
+                                placeholders = ', '.join(['?' for _ in columns])
+                                insert_sql = f"INSERT INTO personas VALUES ({placeholders})"
+                                con.executemany(insert_sql, values)
+
+                                print(f"Procesadas {lines_processed} líneas...")
+                                batch_data = []
+
+        # Insertar último lote
+        if batch_data:
+            values = [tuple(row.values()) for row in batch_data]
+            placeholders = ', '.join(['?' for _ in columns])
+            insert_sql = f"INSERT INTO personas VALUES ({placeholders})"
+            con.executemany(insert_sql, values)
+
+        print(f"Procesamiento completado. Total líneas: {lines_processed}")
+
+        # Crear vista optimizada
+        con.execute("""
+        CREATE OR REPLACE VIEW personas_v AS
+        SELECT
+            DNI, AP_PAT, AP_MAT, NOMBRES, FECHA_NAC, FCH_INSCRIPCION,
+            FCH_EMISION, FCH_CADUCIDAD, UBIGEO_NAC, UBIGEO_DIR, DIRECCION,
+            CASE TRIM(CAST(SEXO AS VARCHAR))
+              WHEN '1' THEN 'MASCULINO'
+              WHEN '2' THEN 'FEMENINO'
+              ELSE 'DESCONOCIDO'
+            END AS SEXO,
+            COALESCE(NULLIF(UPPER(TRIM(EST_CIVIL)), ''), 'SOLTERO') AS EST_CIVIL,
+            DIG_RUC, MADRE, PADRE
+        FROM personas;
+        """)
+
+        # Verificar que se cargaron datos
+        total_rows = con.execute("SELECT COUNT(*) FROM personas").fetchone()[0]
+        print(f"Base de datos creada exitosamente con {total_rows} registros")
+
+        con.close()
         return True
 
     except Exception as e:
-        print(f"Error al descargar los datos con aria2c: {e}")
-        if os.path.exists(TXT_PATH):
-            os.remove(TXT_PATH)
-        print("Continuando sin datos...")
+        print(f"Error al procesar datos desde stream: {e}")
         return False
 
 def _build_db(txt_mtime: Optional[int], existing_con: Optional[duckdb.DuckDBPyConnection]=None):
@@ -155,22 +216,25 @@ def _build_db(txt_mtime: Optional[int], existing_con: Optional[duckdb.DuckDBPyCo
     con.close()
 
 def build_db_if_needed():
-    # Primero intentar descargar los datos si no existen
-    if not os.path.exists(TXT_PATH):
-        if not download_reniec_data():
-            print("No se pudieron descargar los datos, continuando sin datos")
-            return
-    
-    txt_mtime = int(os.path.getmtime(TXT_PATH)) if os.path.exists(TXT_PATH) else None
-    if not os.path.exists(DB_PATH):
-        _build_db(txt_mtime); return
-    con = duckdb.connect(DB_PATH)
-    con.execute("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v BIGINT)")
-    row = con.execute("SELECT v FROM meta WHERE k='txt_mtime'").fetchone()
-    current = row[0] if row else None
-    if current != txt_mtime:
-        _build_db(txt_mtime, con)
-    con.close()
+    # Si la base de datos ya existe, verificar si tiene datos
+    if os.path.exists(DB_PATH):
+        try:
+            con = duckdb.connect(DB_PATH, read_only=True)
+            total_rows = con.execute("SELECT COUNT(*) FROM personas").fetchone()[0]
+            con.close()
+            if total_rows > 0:
+                print(f"Base de datos ya existe con {total_rows} registros")
+                return
+        except Exception as e:
+            print(f"Error al verificar base de datos existente: {e}")
+
+    # Si no hay base de datos o está vacía, cargar desde stream
+    print("Cargando datos desde Bunny Storage...")
+    if not load_reniec_from_stream():
+        print("Error al cargar datos desde stream")
+        return
+
+    print("Base de datos creada exitosamente desde stream")
 
 
 @app.on_event("startup")
