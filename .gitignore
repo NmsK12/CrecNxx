@@ -1,0 +1,35 @@
+# Datos sensibles
+reniec.txt
+personas.duckdb
+*.db
+*.duckdb
+
+# Entorno virtual
+venv/
+env/
+.venv/
+.env/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Archivos temporales
+*.tmp
+*.temp
