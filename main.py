@@ -346,9 +346,19 @@ def root():
             "/personas?ap_pat={apellido} - Búsqueda por apellido paterno",
             "/personas?ap_mat={apellido} - Búsqueda por apellido materno",
             "/personas?nombres={nombre} - Búsqueda por nombre",
-            "/health - Estado de la API",
+            "/health - Estado detallado de la API",
+            "/status - Estado simple (siempre responde)",
             "/rebuild - Reconstruir base de datos"
         ]
+    }
+
+@app.get("/status")
+def status():
+    """Endpoint simple que siempre responde para verificar que la API está viva"""
+    return {
+        "status": "alive",
+        "message": "API RENIEC está ejecutándose",
+        "timestamp": "2024"
     }
 
 @app.get("/reniec/info")
