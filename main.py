@@ -269,15 +269,24 @@ def health():
         "txt_exists": os.path.exists(TXT_PATH),
         "txt_path": TXT_PATH,
         "db_exists": os.path.exists(DB_PATH),
+        "processing_status": "processing_database" if STARTUP_ERROR is None and not os.path.exists(DB_PATH) else "ready"
     }
     try:
-        info["txt_size_bytes"] = os.path.getsize(TXT_PATH) if os.path.exists(TXT_PATH) else None
+        if os.path.exists(TXT_PATH):
+            txt_size = os.path.getsize(TXT_PATH)
+            info["txt_size_bytes"] = txt_size
+            info["txt_size_gb"] = txt_size / (1024**3)
+
         if os.path.exists(DB_PATH):
             con = duckdb.connect(DB_PATH, read_only=True)
             try:
                 info["rows_in_db"] = con.execute("SELECT COUNT(*) FROM personas").fetchone()[0]
-            except Exception:
+                # Verificar si la tabla tiene datos
+                sample = con.execute("SELECT * FROM personas LIMIT 1").fetchone()
+                info["has_data"] = sample is not None
+            except Exception as e:
                 info["rows_in_db"] = None
+                info["db_error"] = str(e)
             con.close()
     except Exception as e:
         info["health_error"] = str(e)
