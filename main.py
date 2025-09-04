@@ -18,49 +18,71 @@ STARTUP_ERROR: Optional[str] = None
 def download_reniec_data():
     """Descarga los datos de RENIEC desde Google Drive"""
     if os.path.exists(TXT_PATH):
-        print("Archivo reniec.txt ya existe, usando archivo local")
-        return True
-    
+        file_size = os.path.getsize(TXT_PATH)
+        print(f"Archivo reniec.txt ya existe, tamaño: {file_size / (1024**3):.2f} GB")
+        # Si el archivo existe y es mayor a 1GB, asumimos que está completo
+        if file_size > 1024**3:
+            print("Archivo parece estar completo, usando archivo local")
+            return True
+        else:
+            print("Archivo es muy pequeño, volviendo a descargar...")
+            os.remove(TXT_PATH)
+
     try:
         print("Descargando datos de RENIEC desde Google Drive...")
         print(f"URL: {GOOGLE_DRIVE_URL}")
-        
-        # Usar gdown con el enlace directo público
-        try:
-            gdown.download(GOOGLE_DRIVE_URL, TXT_PATH, quiet=False)
-            print("Datos descargados exitosamente con gdown")
-        except Exception as gdown_error:
-            print(f"Gdown falló: {gdown_error}")
-            print("Intentando con requests...")
-            
-            # Fallback con requests
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            
-            response = requests.get(GOOGLE_DRIVE_URL, headers=headers, stream=True)
-            response.raise_for_status()
-            
-            with open(TXT_PATH, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+
+        # Intentar primero con requests para mejor control
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        print("Intentando descarga con requests...")
+        response = requests.get(GOOGLE_DRIVE_URL, headers=headers, stream=True)
+        response.raise_for_status()
+
+        # Verificar el tamaño del contenido si está disponible
+        total_size = int(response.headers.get('content-length', 0))
+        if total_size > 0:
+            print(f"Tamaño esperado: {total_size / (1024**3):.2f} GB")
+
+        downloaded_size = 0
+        with open(TXT_PATH, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
                     f.write(chunk)
-            
-            print("Datos descargados exitosamente con requests")
-        
-        # Verificar que el archivo no sea HTML
+                    downloaded_size += len(chunk)
+
+        actual_size = os.path.getsize(TXT_PATH)
+        print(f"Tamaño descargado: {actual_size / (1024**3):.2f} GB")
+
+        # Verificar que no sea un archivo HTML de error
         if os.path.exists(TXT_PATH):
             with open(TXT_PATH, 'r', encoding='utf-8', errors='ignore') as f:
                 first_line = f.readline().strip()
                 if first_line.startswith('<!DOCTYPE') or first_line.startswith('<html'):
                     print("ERROR: El archivo descargado es HTML, no TXT. El enlace requiere autenticación.")
-                    os.remove(TXT_PATH)  # Eliminar archivo HTML
+                    print(f"Contenido del archivo: {first_line[:200]}...")
+                    os.remove(TXT_PATH)
                     return False
-        
+
+        # Verificar que el archivo tenga un tamaño razonable (> 1GB)
+        if actual_size < 1024**3:  # Menos de 1GB
+            print(f"ERROR: Archivo descargado es muy pequeño ({actual_size / (1024**3):.2f} GB). Se esperaba al menos 5GB.")
+            print("El enlace podría estar apuntando a un archivo incorrecto.")
+            if os.path.exists(TXT_PATH):
+                os.remove(TXT_PATH)
+            return False
+
+        print("Datos descargados exitosamente")
         return True
+
     except Exception as e:
         print(f"Error al descargar los datos: {e}")
+        if os.path.exists(TXT_PATH):
+            os.remove(TXT_PATH)
         print("Continuando sin datos...")
-        return False 
+        return False
 
 def _build_db(txt_mtime: Optional[int], existing_con: Optional[duckdb.DuckDBPyConnection]=None):
     if not os.path.exists(TXT_PATH):
