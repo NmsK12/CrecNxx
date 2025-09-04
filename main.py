@@ -174,10 +174,14 @@ def build_db_if_needed():
 def on_startup():
     global STARTUP_ERROR
     try:
+        print("Iniciando procesamiento de base de datos...")
+        print("Esto puede tomar varios minutos con un archivo de 5.8GB")
         build_db_if_needed()
         STARTUP_ERROR = None
+        print("Base de datos procesada exitosamente")
     except Exception as e:
         STARTUP_ERROR = str(e)
+        print(f"Error durante el startup: {e}")
 
 
 def _ensure_ready():
