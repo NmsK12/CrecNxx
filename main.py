@@ -9,8 +9,8 @@ DB_PATH  = "personas.duckdb"
 DELIM    = "|"                 
 ENCODING_DEFAULT = "utf-8"     
 
-# URL de Google Drive (necesitarás proporcionar el enlace real)
-GOOGLE_DRIVE_URL = "https://drive.usercontent.google.com/download?id=12OYjI-Z6yOMCMCU4kCIObliXHHi7s98T&export=download&authuser=0&confirm=t&uuid=1d51a16e-3f14-4dea-8ea0-0717d304a3f6&at=AN8xHop0iIs-6wgeIj6X8_JrZ5B7%3A1756955800108"
+# URL de Google Drive (archivo completo de 5.8GB)
+GOOGLE_DRIVE_URL = "https://drive.usercontent.google.com/download?id=12OYjI-Z6yOMCMCU4kCIObliXHHi7s98T&export=download&authuser=0&confirm=t&uuid=bcd21b93-b050-4af7-b349-e195c2b75cc2&at=AN8xHopYN2rm6zpH2Dj6ozcmqz06%3A1756957395612"
 
 app = FastAPI(title="API RENIEC con DuckDB")
 STARTUP_ERROR: Optional[str] = None
