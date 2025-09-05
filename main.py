@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 app = FastAPI()
 
 BASE_INDEX_URL = "https://reniecdata.b-cdn.net/indices"
-RENIEC_URL = "https://reniecdata.b-cdn.net/reniec/reniec.txt"
+RENIEC_URL = "https://reniecdata.b-cdn.net/reniec.txt"
 
 def cargar_indice_prefijo(prefijo: str):
     url = f"{BASE_INDEX_URL}/{prefijo}.json"
