@@ -2,7 +2,11 @@ import requests
 import json
 from fastapi import FastAPI, HTTPException
 
-app = FastAPI()
+app = FastAPI(
+    title="API RENIEC",
+    description="API para búsqueda rápida de DNIs en Bunny",
+    version="1.0.0"
+)
 
 BASE_INDEX_URL = "https://reniecdata.b-cdn.net/reniec/indices"
 RENIEC_URL = "https://reniecdata.b-cdn.net/reniec/reniec.txt"
@@ -51,6 +55,17 @@ def procesar_linea(linea: str):
         "distrito": partes[6]
     }
 
+# 🟢 Endpoint raíz de prueba
+@app.get("/")
+def home():
+    return {"status": "ok", "mensaje": "API RENIEC funcionando ✅"}
+
+# 🟢 Endpoint de test para Railway
+@app.get("/test")
+def test():
+    return {"ok": True, "mensaje": "Railway respondió correctamente 🚀"}
+
+# 🟢 Endpoint principal para buscar DNI
 @app.get("/dni/{dni}")
 def get_dni(dni: str):
     """Endpoint para buscar DNI"""
