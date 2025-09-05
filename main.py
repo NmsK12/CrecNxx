@@ -8,7 +8,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-BASE_INDEX_URL = "https://reniecdata.b-cdn.net/reniec/indices"
+BASE_INDEX_URL = "https://reniecdata.b-cdn.net/indices"
 RENIEC_URL = "https://reniecdata.b-cdn.net/reniec/reniec.txt"
 
 def cargar_indice_prefijo(prefijo: str):
