@@ -66,15 +66,25 @@ def buscar_dni_en_bunny(dni: str):
     return procesar_linea(linea)
 
 def procesar_linea(linea: str):
+    """Convierte una línea del TXT en JSON"""
     partes = linea.split("|")
     return {
         "dni": partes[0],
-        "nombre": partes[1],
-        "apellido_paterno": partes[2],
-        "apellido_materno": partes[3],
-        "departamento": partes[4],
-        "provincia": partes[5],
-        "distrito": partes[6]
+        "apellido_paterno": partes[1],
+        "apellido_materno": partes[2],
+        "nombres": partes[3],
+        "fecha_nacimiento": partes[4],
+        "fecha_inscripcion": partes[5],
+        "fecha_emision": partes[6],
+        "fecha_caducidad": partes[7],
+        "ubigeo_nacimiento": partes[8],
+        "ubigeo_direccion": partes[9],
+        "direccion": partes[10],
+        "sexo": partes[11],
+        "estado_civil": partes[12],
+        "digito_ruc": partes[13],
+        "madre": partes[14],
+        "padre": partes[15]
     }
 
 @app.get("/")
